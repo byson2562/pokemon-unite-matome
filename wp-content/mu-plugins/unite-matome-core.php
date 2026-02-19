@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Unite Matome Core
  * Description: まとめ運用向けの軽量機能。
- * Version: 0.2.0
+ * Version: 0.3.0
  */
 
 declare(strict_types=1);
@@ -31,6 +31,13 @@ add_action('init', static function (): void {
     remove_action('wp_print_styles', 'print_emoji_styles');
     remove_action('admin_print_scripts', 'print_emoji_detection_script');
     remove_action('admin_print_styles', 'print_emoji_styles');
+    remove_action('wp_head', 'wlwmanifest_link');
+    remove_action('wp_head', 'rsd_link');
+    remove_action('wp_head', 'wp_shortlink_wp_head', 10);
+    remove_action('wp_head', 'rel_canonical');
+    remove_action('wp_head', 'rest_output_link_wp_head', 10);
+    remove_action('wp_head', 'wp_oembed_add_discovery_links', 10);
+    remove_action('wp_head', 'wp_oembed_add_host_js');
 });
 
 add_action('wp_enqueue_scripts', static function (): void {
@@ -47,6 +54,10 @@ add_action('wp_enqueue_scripts', static function (): void {
     wp_enqueue_script('jquery');
 
     wp_dequeue_script('wp-embed');
+    wp_dequeue_style('wp-block-library');
+    wp_dequeue_style('wp-block-library-theme');
+    wp_dequeue_style('global-styles');
+    wp_dequeue_style('classic-theme-styles');
 }, 100);
 
 add_action('wp_default_scripts', static function (WP_Scripts $scripts): void {
@@ -87,6 +98,53 @@ add_filter('wp_resource_hints', static function (array $urls, string $relation_t
     );
 }, 10, 2);
 
+add_action('wp_enqueue_scripts', static function (): void {
+    if (is_user_logged_in()) {
+        return;
+    }
+
+    wp_deregister_style('dashicons');
+}, 101);
+
+add_filter('script_loader_src', static function (string $src): string {
+    if (is_admin()) {
+        return $src;
+    }
+
+    return um_remove_asset_version_param($src);
+}, 9999);
+
+add_filter('style_loader_src', static function (string $src): string {
+    if (is_admin()) {
+        return $src;
+    }
+
+    return um_remove_asset_version_param($src);
+}, 9999);
+
+add_filter('wp_get_attachment_image_attributes', static function (array $attr): array {
+    if (empty($attr['loading'])) {
+        $attr['loading'] = 'lazy';
+    }
+    if (empty($attr['decoding'])) {
+        $attr['decoding'] = 'async';
+    }
+
+    return $attr;
+}, 10);
+
+add_action('send_headers', static function (): void {
+    if (is_admin() || is_user_logged_in()) {
+        return;
+    }
+
+    if (!is_singular() && !is_home() && !is_front_page() && !is_archive()) {
+        return;
+    }
+
+    header('Cache-Control: public, max-age=300, s-maxage=300');
+}, 20);
+
 /**
  * Cocoonの重い既定値を抑える。
  */
@@ -99,6 +157,92 @@ add_action('after_setup_theme', static function (): void {
 add_filter('is_sns_share_buttons_visible', static function (): bool {
     return false;
 }, 99, 2);
+
+/**
+ * SEO: タイトル、description、canonicalを統一。
+ */
+add_filter('document_title_parts', static function (array $parts): array {
+    if (is_front_page() || is_home()) {
+        return $parts;
+    }
+
+    $prefix = '【ポケユナ】';
+    if (!empty($parts['title']) && strpos($parts['title'], $prefix) !== 0) {
+        $parts['title'] = $prefix . $parts['title'];
+    }
+
+    return $parts;
+}, 20);
+
+add_filter('wpseo_title', static function (string $title): string {
+    if (is_front_page() || is_home() || strpos($title, '【ポケユナ】') === 0) {
+        return $title;
+    }
+
+    return '【ポケユナ】' . $title;
+}, 20);
+
+add_filter('wpseo_metadesc', static function (string $desc): string {
+    $generated = um_generate_meta_description();
+    if ($generated === '') {
+        return $desc;
+    }
+
+    return $generated;
+}, 20);
+
+add_filter('get_meta_description_text', static function (string $description): string {
+    $generated = um_generate_meta_description();
+    if ($generated === '') {
+        return $description;
+    }
+
+    return $generated;
+}, 20);
+
+add_filter('get_ogp_description_text', static function (string $description): string {
+    $generated = um_generate_meta_description();
+    if ($generated === '') {
+        return $description;
+    }
+
+    return $generated;
+}, 20);
+
+add_filter('robots_txt', static function (string $output, bool $public): string {
+    if (!$public) {
+        return $output;
+    }
+
+    $lines = array_filter(array_map('trim', explode("\n", $output)));
+    $hasSitemap = false;
+
+    foreach ($lines as $line) {
+        if (stripos($line, 'Sitemap:') === 0) {
+            $hasSitemap = true;
+            break;
+        }
+    }
+
+    if (!$hasSitemap) {
+        $lines[] = 'Sitemap: ' . home_url('/wp-sitemap.xml');
+    }
+
+    if (!in_array('Allow: /wp-admin/admin-ajax.php', $lines, true)) {
+        $lines[] = 'Allow: /wp-admin/admin-ajax.php';
+    }
+
+    return implode("\n", $lines) . "\n";
+}, 10, 2);
+
+add_filter('wp_robots', static function (array $robots): array {
+    if (is_search()) {
+        $robots['noindex'] = true;
+        $robots['nofollow'] = true;
+    }
+
+    return $robots;
+});
 
 /**
  * 新規投稿の初期本文を固定化。
@@ -318,4 +462,62 @@ function um_render_ranking_list(int $limit = 5): string
     $html .= '</ol>';
 
     return $html;
+}
+
+function um_remove_asset_version_param(string $src): string
+{
+    if ($src === '') {
+        return $src;
+    }
+
+    return (string) remove_query_arg('ver', $src);
+}
+
+function um_generate_meta_description(): string
+{
+    if (is_singular('post')) {
+        $post_id = get_queried_object_id();
+        if (!$post_id) {
+            return '';
+        }
+
+        $manual = trim((string) get_post_meta($post_id, '_yoast_wpseo_metadesc', true));
+        if ($manual !== '') {
+            return um_truncate_text($manual, 120);
+        }
+
+        $excerpt = trim((string) get_the_excerpt($post_id));
+        if ($excerpt !== '') {
+            return um_truncate_text(wp_strip_all_tags($excerpt), 120);
+        }
+
+        $content = trim((string) get_post_field('post_content', $post_id));
+        return um_truncate_text(wp_strip_all_tags($content), 120);
+    }
+
+    if (is_category() || is_tag() || is_tax()) {
+        $term = get_queried_object();
+        if ($term instanceof WP_Term) {
+            $desc = trim(wp_strip_all_tags((string) term_description($term)));
+            if ($desc !== '') {
+                return um_truncate_text($desc, 120);
+            }
+            return um_truncate_text($term->name . 'に関する最新の速報・反応まとめ記事一覧。', 120);
+        }
+    }
+
+    if (is_home() || is_front_page()) {
+        return 'ポケモンユナイトの最新速報、環境考察、ランクマ・大会の反応を最速でまとめています。';
+    }
+
+    return um_truncate_text((string) get_bloginfo('description'), 120);
+}
+
+function um_truncate_text(string $text, int $length): string
+{
+    if (function_exists('mb_substr')) {
+        return mb_substr($text, 0, $length);
+    }
+
+    return substr($text, 0, $length);
 }
