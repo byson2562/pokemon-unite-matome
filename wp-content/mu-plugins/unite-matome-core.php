@@ -1,0 +1,321 @@
+<?php
+/**
+ * Plugin Name: Unite Matome Core
+ * Description: まとめ運用向けの軽量機能。
+ * Version: 0.2.0
+ */
+
+declare(strict_types=1);
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * テーマに依存しないMVPスタイル。
+ */
+add_action('wp_enqueue_scripts', static function (): void {
+    wp_enqueue_style(
+        'unite-matome-core-style',
+        content_url('mu-plugins/assets/unite-matome.css'),
+        [],
+        '0.3.0'
+    );
+});
+
+/**
+ * フロント表示の不要アセットを削減。
+ */
+add_action('init', static function (): void {
+    remove_action('wp_head', 'print_emoji_detection_script', 7);
+    remove_action('wp_print_styles', 'print_emoji_styles');
+    remove_action('admin_print_scripts', 'print_emoji_detection_script');
+    remove_action('admin_print_styles', 'print_emoji_styles');
+});
+
+add_action('wp_enqueue_scripts', static function (): void {
+    if (is_admin()) {
+        return;
+    }
+
+    // Cocoonが読み込むjQuery Migrateを外し、ローカルのjQuery Coreのみを使う。
+    wp_deregister_script('jquery');
+    wp_deregister_script('jquery-core');
+    wp_deregister_script('jquery-migrate');
+    wp_register_script('jquery-core', includes_url('/js/jquery/jquery.min.js'), [], null, true);
+    wp_register_script('jquery', false, ['jquery-core'], null, true);
+    wp_enqueue_script('jquery');
+
+    wp_dequeue_script('wp-embed');
+}, 100);
+
+add_action('wp_default_scripts', static function (WP_Scripts $scripts): void {
+    if (is_admin() || empty($scripts->registered['jquery'])) {
+        return;
+    }
+
+    $scripts->registered['jquery']->deps = array_values(
+        array_filter(
+            $scripts->registered['jquery']->deps,
+            static fn (string $dep): bool => $dep !== 'jquery-migrate'
+        )
+    );
+});
+
+add_filter('wp_resource_hints', static function (array $urls, string $relation_type): array {
+    if (!in_array($relation_type, ['dns-prefetch', 'preconnect'], true)) {
+        return $urls;
+    }
+
+    $homeHost = (string) parse_url(home_url(), PHP_URL_HOST);
+    if ($homeHost === '') {
+        return $urls;
+    }
+
+    return array_values(
+        array_filter(
+            $urls,
+            static function ($url) use ($homeHost): bool {
+                if (!is_string($url)) {
+                    return false;
+                }
+
+                $host = (string) parse_url($url, PHP_URL_HOST);
+                return $host === '' || $host === $homeHost;
+            }
+        )
+    );
+}, 10, 2);
+
+/**
+ * Cocoonの重い既定値を抑える。
+ */
+add_action('after_setup_theme', static function (): void {
+    if ((string) get_theme_mod('pre_acquisition_list', '') !== '') {
+        set_theme_mod('pre_acquisition_list', '');
+    }
+});
+
+add_filter('is_sns_share_buttons_visible', static function (): bool {
+    return false;
+}, 99, 2);
+
+/**
+ * 新規投稿の初期本文を固定化。
+ */
+add_filter('default_content', static function (string $content, WP_Post $post): string {
+    if ($post->post_type !== 'post') {
+        return $content;
+    }
+
+    return <<<'HTML'
+<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>ここに引用本文（出典URL・日時を併記）</p><cite>出典: https://example.com/ (YYYY-MM-DD HH:MM)</cite></blockquote>
+<!-- /wp:quote -->
+
+<!-- wp:paragraph {"className":"um-admin-comment"} -->
+<p class="um-admin-comment"><strong>管理人コメント:</strong> ここに短評（3-6行）</p>
+<!-- /wp:paragraph -->
+HTML;
+}, 10, 2);
+
+/**
+ * 速報投稿用ブロックパターン。
+ */
+add_action('init', static function (): void {
+    if (!function_exists('register_block_pattern')) {
+        return;
+    }
+
+    register_block_pattern_category('unite-matome', ['label' => 'Unite Matome']);
+
+    register_block_pattern(
+        'unite-matome/quick-matome-post',
+        [
+            'title'       => '速報まとめテンプレート',
+            'description' => '引用 -> 管理人コメント -> 区切りの最小テンプレート',
+            'categories'  => ['unite-matome'],
+            'content'     => <<<'HTML'
+<!-- wp:quote -->
+<blockquote class="wp-block-quote"><p>ここに引用本文（出典URL・日時を併記）</p><cite>出典: https://example.com/ (YYYY-MM-DD HH:MM)</cite></blockquote>
+<!-- /wp:quote -->
+
+<!-- wp:paragraph {"className":"um-admin-comment"} -->
+<p class="um-admin-comment"><strong>管理人コメント:</strong> ここに短評（3-6行）</p>
+<!-- /wp:paragraph -->
+
+<!-- wp:separator -->
+<hr class="wp-block-separator has-alpha-channel-opacity"/>
+<!-- /wp:separator -->
+HTML,
+        ]
+    );
+});
+
+/**
+ * 関連記事を本文下に自動出力（同タグ優先）。
+ */
+add_filter('the_content', static function (string $content): string {
+    if (!is_singular('post') || !in_the_loop() || !is_main_query()) {
+        return $content;
+    }
+
+    $post_id = get_the_ID();
+    if (!$post_id) {
+        return $content;
+    }
+
+    $related = um_get_related_posts((int) $post_id);
+    if (!$related) {
+        return $content;
+    }
+
+    $html = '<section class="um-related-posts"><h2>関連記事</h2><ul>';
+    foreach ($related as $item) {
+        $title = esc_html(get_the_title($item));
+        $url = esc_url(get_permalink($item));
+        $html .= "<li><a href=\"{$url}\">{$title}</a></li>";
+    }
+    $html .= '</ul></section>';
+
+    return $content . $html;
+}, 20);
+
+/**
+ * トップページ向けショートコード。
+ */
+add_shortcode('um_home_sections', static function (): string {
+    ob_start();
+
+    echo '<section class="um-home-block">';
+    echo '<h2>新着速報</h2>';
+    echo um_render_post_list([
+        'post_type'           => 'post',
+        'post_status'         => 'publish',
+        'posts_per_page'      => 6,
+        'ignore_sticky_posts' => true,
+        'no_found_rows'       => true,
+    ]);
+    echo '</section>';
+
+    echo '<section class="um-home-block um-ranking-block">';
+    echo '<h2>ランキング</h2>';
+    echo um_render_ranking_list(5);
+    echo '</section>';
+
+    echo '<section class="um-home-block um-home-list-block">';
+    echo '<h2>一覧</h2>';
+    echo um_render_post_list([
+        'post_type'           => 'post',
+        'post_status'         => 'publish',
+        'posts_per_page'      => 20,
+        'ignore_sticky_posts' => true,
+        'no_found_rows'       => true,
+    ]);
+    echo '</section>';
+
+    return (string) ob_get_clean();
+});
+
+/**
+ * 記事詳細のPVをカウント。
+ */
+add_action('wp', static function (): void {
+    if (!is_singular('post') || is_preview() || is_admin()) {
+        return;
+    }
+
+    $postId = get_queried_object_id();
+    if (!$postId) {
+        return;
+    }
+
+    $metaKey = '_um_views';
+    $views = (int) get_post_meta($postId, $metaKey, true);
+    update_post_meta($postId, $metaKey, $views + 1);
+});
+
+function um_get_related_posts(int $post_id): array
+{
+    $tag_ids = wp_get_post_tags($post_id, ['fields' => 'ids']);
+
+    $args = [
+        'post_type'           => 'post',
+        'post_status'         => 'publish',
+        'post__not_in'        => [$post_id],
+        'posts_per_page'      => 6,
+        'ignore_sticky_posts' => true,
+        'no_found_rows'       => true,
+    ];
+
+    if (!empty($tag_ids)) {
+        $args['tag__in'] = $tag_ids;
+    }
+
+    $query = new WP_Query($args);
+    if (!$query->have_posts()) {
+        return [];
+    }
+
+    return wp_list_pluck($query->posts, 'ID');
+}
+
+function um_render_post_list(array $args): string
+{
+    $query = new WP_Query($args);
+    if (!$query->have_posts()) {
+        return '<p>記事はまだありません。</p>';
+    }
+
+    $html = '<ul class="um-post-list">';
+    foreach ($query->posts as $post) {
+        $title = esc_html(get_the_title($post));
+        $url = esc_url(get_permalink($post));
+        $date = esc_html(get_the_date('Y-m-d H:i', $post));
+        $html .= "<li><a href=\"{$url}\">{$title}</a> <span>{$date}</span></li>";
+    }
+    $html .= '</ul>';
+
+    return $html;
+}
+
+function um_render_ranking_list(int $limit = 5): string
+{
+    $query = new WP_Query([
+        'post_type'           => 'post',
+        'post_status'         => 'publish',
+        'posts_per_page'      => $limit,
+        'meta_key'            => '_um_views',
+        'orderby'             => ['meta_value_num' => 'DESC', 'date' => 'DESC'],
+        'order'               => 'DESC',
+        'ignore_sticky_posts' => true,
+        'no_found_rows'       => true,
+    ]);
+
+    if (!$query->have_posts()) {
+        $query = new WP_Query([
+            'post_type'           => 'post',
+            'post_status'         => 'publish',
+            'posts_per_page'      => $limit,
+            'orderby'             => 'date',
+            'order'               => 'DESC',
+            'ignore_sticky_posts' => true,
+            'no_found_rows'       => true,
+        ]);
+    }
+
+    if (!$query->have_posts()) {
+        return '<p>記事はまだありません。</p>';
+    }
+
+    $html = '<ol class="um-ranking-list">';
+    foreach ($query->posts as $post) {
+        $title = esc_html(get_the_title($post));
+        $url = esc_url(get_permalink($post));
+        $views = (int) get_post_meta((int) $post->ID, '_um_views', true);
+        $html .= "<li><a href=\"{$url}\">{$title}</a> <span>{$views} views</span></li>";
+    }
+    $html .= '</ol>';
+
+    return $html;
+}
