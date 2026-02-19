@@ -6,6 +6,8 @@ SITE_TITLE="${2:-ポケモンユナイト速報まとめ}"
 ADMIN_USER="${3:-admin}"
 ADMIN_PASSWORD="${4:-adminpass123!}"
 ADMIN_EMAIL="${5:-admin@example.com}"
+GA4_MEASUREMENT_ID_INPUT="${6:-${GA4_MEASUREMENT_ID:-}}"
+GSC_VERIFICATION_TOKEN_INPUT="${7:-${GSC_VERIFICATION_TOKEN:-}}"
 
 WP="docker compose --profile tools run --rm wpcli --allow-root"
 
@@ -35,6 +37,14 @@ $WP rewrite flush --hard
 $WP option update default_comment_status closed
 $WP option update default_ping_status closed
 $WP option update default_pingback_flag 0
+
+if [ -n "$GA4_MEASUREMENT_ID_INPUT" ]; then
+  $WP option update um_ga4_measurement_id "$GA4_MEASUREMENT_ID_INPUT"
+fi
+
+if [ -n "$GSC_VERIFICATION_TOKEN_INPUT" ]; then
+  $WP option update um_gsc_verification_token "$GSC_VERIFICATION_TOKEN_INPUT"
+fi
 
 create_page () {
   local title="$1"

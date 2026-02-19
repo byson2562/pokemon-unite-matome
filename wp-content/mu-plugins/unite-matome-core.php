@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Unite Matome Core
  * Description: まとめ運用向けの軽量機能。
- * Version: 0.3.0
+ * Version: 0.4.0
  */
 
 declare(strict_types=1);
@@ -243,6 +243,33 @@ add_filter('wp_robots', static function (array $robots): array {
 
     return $robots;
 });
+
+/**
+ * GA4 / Search Console タグ出力（値が設定されている場合のみ）。
+ */
+add_action('wp_head', static function (): void {
+    if (is_admin()) {
+        return;
+    }
+
+    $token = um_get_search_console_token();
+    if ($token !== '') {
+        echo '<meta name="google-site-verification" content="' . esc_attr($token) . '">' . "\n";
+    }
+
+    $measurementId = um_get_ga4_measurement_id();
+    if ($measurementId === '') {
+        return;
+    }
+
+    echo '<script async src="https://www.googletagmanager.com/gtag/js?id=' . esc_attr($measurementId) . '"></script>' . "\n";
+    echo "<script>\n";
+    echo "window.dataLayer = window.dataLayer || [];\n";
+    echo "function gtag(){dataLayer.push(arguments);}\n";
+    echo "gtag('js', new Date());\n";
+    echo "gtag('config', '" . esc_js($measurementId) . "', { 'anonymize_ip': true });\n";
+    echo "</script>\n";
+}, 3);
 
 /**
  * 新規投稿の初期本文を固定化。
@@ -520,4 +547,34 @@ function um_truncate_text(string $text, int $length): string
     }
 
     return substr($text, 0, $length);
+}
+
+function um_get_ga4_measurement_id(): string
+{
+    $option = trim((string) get_option('um_ga4_measurement_id', ''));
+    if ($option !== '') {
+        return (string) preg_replace('/[^A-Z0-9\-]/', '', strtoupper($option));
+    }
+
+    $env = trim((string) getenv('GA4_MEASUREMENT_ID'));
+    if ($env === '') {
+        return '';
+    }
+
+    return (string) preg_replace('/[^A-Z0-9\-]/', '', strtoupper($env));
+}
+
+function um_get_search_console_token(): string
+{
+    $option = trim((string) get_option('um_gsc_verification_token', ''));
+    if ($option !== '') {
+        return (string) preg_replace('/[^a-zA-Z0-9_\-]/', '', $option);
+    }
+
+    $env = trim((string) getenv('GSC_VERIFICATION_TOKEN'));
+    if ($env === '') {
+        return '';
+    }
+
+    return (string) preg_replace('/[^a-zA-Z0-9_\-]/', '', $env);
 }

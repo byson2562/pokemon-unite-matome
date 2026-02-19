@@ -33,6 +33,19 @@ docker compose up -d
 ./scripts/first_setup.sh "http://localhost:8080" "ユナイト速報まとめ" "admin" "StrongPassword!234" "you@example.com"
 ```
 
+GA4 / Search Console も同時設定する場合:
+
+```bash
+./scripts/first_setup.sh "http://localhost:8080" "ユナイト速報まとめ" "admin" "StrongPassword!234" "you@example.com" "G-XXXXXXXXXX" "google-site-verification-token"
+```
+
+もしくは `.env` に以下を入れてから実行:
+
+```bash
+GA4_MEASUREMENT_ID=G-XXXXXXXXXX
+GSC_VERIFICATION_TOKEN=google-site-verification-token
+```
+
 ## 3. 推奨プラグイン導入
 
 ```bash
@@ -89,3 +102,15 @@ docker compose up -d
 ## 9. 注意
 
 5ch転載・引用は規約/ガイドラインの最新確認が前提です。自動収集は規約違反リスクが高いため、手動または半自動編集運用を推奨します。
+
+## 10. 運用TODO（本番前チェック）
+
+- [ ] 本番ドメインを設定（WordPress URL / Site URL）
+- [ ] GA4プロパティ作成と `G-` 測定IDの設定
+- [ ] Search Consoleにドメイン登録し、確認トークンを設定
+- [ ] `運営者情報 / 引用・転載ポリシー / 問い合わせ / プライバシーポリシー` を実文で更新
+- [ ] OGP画像（サイト共通）とファビコンを設定
+- [ ] 画像最適化方針を決定（EWWW有効化 or 事前WebP変換）
+- [ ] バックアップ運用を有効化（UpdraftPlusの保存先設定）
+- [ ] 速度確認（Lighthouse mobile / Core Web Vitals）を実施
+- [ ] 公開後7日分の運用KPIを定義（PV, CTR, 直帰率, 記事更新本数）
